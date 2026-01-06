@@ -466,6 +466,7 @@ class Model:
         # attributes per body
         self.attribute_frequency["body_q"] = ModelAttributeFrequency.BODY
         self.attribute_frequency["body_qd"] = ModelAttributeFrequency.BODY
+        self.attribute_frequency["body_qdd"] = ModelAttributeFrequency.BODY
         self.attribute_frequency["body_com"] = ModelAttributeFrequency.BODY
         self.attribute_frequency["body_inertia"] = ModelAttributeFrequency.BODY
         self.attribute_frequency["body_inv_inertia"] = ModelAttributeFrequency.BODY
@@ -490,6 +491,7 @@ class Model:
 
         # attributes per joint dof
         self.attribute_frequency["joint_qd"] = ModelAttributeFrequency.JOINT_DOF
+        self.attribute_frequency["joint_qdd"] = ModelAttributeFrequency.JOINT_DOF
         self.attribute_frequency["joint_f"] = ModelAttributeFrequency.JOINT_DOF
         self.attribute_frequency["joint_armature"] = ModelAttributeFrequency.JOINT_DOF
         self.attribute_frequency["joint_target_pos"] = ModelAttributeFrequency.JOINT_DOF
@@ -551,12 +553,14 @@ class Model:
         if self.body_count:
             s.body_q = wp.clone(self.body_q, requires_grad=requires_grad)
             s.body_qd = wp.clone(self.body_qd, requires_grad=requires_grad)
+            s.body_qdd = wp.zeros_like(self.body_qd, requires_grad=requires_grad)
             s.body_f = wp.zeros_like(self.body_qd, requires_grad=requires_grad)
 
         # joints
         if self.joint_count:
             s.joint_q = wp.clone(self.joint_q, requires_grad=requires_grad)
             s.joint_qd = wp.clone(self.joint_qd, requires_grad=requires_grad)
+            s.joint_qdd = wp.zeros_like(self.joint_qd, requires_grad=requires_grad)
 
         # attach custom attributes with assignment==STATE
         self._add_custom_attributes(s, ModelAttributeAssignment.STATE, requires_grad=requires_grad)

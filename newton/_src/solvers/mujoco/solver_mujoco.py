@@ -48,7 +48,9 @@ from .kernels import (
     apply_mjc_control_kernel,
     apply_mjc_qfrc_kernel,
     convert_body_xforms_to_warp_kernel,
+    convert_mj_acc_to_warp_kernel,
     convert_mj_coords_to_warp_kernel,
+    convert_mj_body_cacc_to_warp_kernel,
     convert_mjw_contact_to_warp_kernel,
     convert_newton_contacts_to_mjwarp_kernel,
     convert_warp_coords_to_mj_kernel,
@@ -709,18 +711,22 @@ class SolverMuJoCo(SolverBase):
             # we have an MjWarp Data object
             qpos = mj_data.qpos
             qvel = mj_data.qvel
+            qacc = mj_data.qacc
             nworld = mj_data.nworld
 
             xpos = mj_data.xpos
             xquat = mj_data.xquat
+            cacc = mj_data.cacc
         else:
             # we have an MjData object from Mujoco
             qpos = wp.array([mj_data.qpos], dtype=wp.float32, device=model.device)
             qvel = wp.array([mj_data.qvel], dtype=wp.float32, device=model.device)
+            qacc = wp.array([mj_data.qacc], dtype=wp.float32, device=model.device)
             nworld = 1
 
             xpos = wp.array([mj_data.xpos], dtype=wp.vec3, device=model.device)
             xquat = wp.array([mj_data.xquat], dtype=wp.quat, device=model.device)
+            cacc = wp.array([mj_data.cacc], dtype=wp.spatial_vector, device=model.device)
         joints_per_world = model.joint_count // nworld
         wp.launch(
             convert_mj_coords_to_warp_kernel,
@@ -736,6 +742,22 @@ class SolverMuJoCo(SolverBase):
                 model.joint_dof_dim,
             ],
             outputs=[state.joint_q, state.joint_qd],
+            device=model.device,
+        )
+        wp.launch(
+            convert_mj_acc_to_warp_kernel,
+            dim=(nworld, joints_per_world),
+            inputs=[
+                qpos,
+                qacc,
+                joints_per_world,
+                int(model.up_axis),
+                model.joint_type,
+                model.joint_q_start,
+                model.joint_qd_start,
+                model.joint_dof_dim,
+            ],
+            outputs=[state.joint_qdd],
             device=model.device,
         )
 
@@ -779,6 +801,18 @@ class SolverMuJoCo(SolverBase):
                 outputs=[state.body_q],
                 device=model.device,
             )
+
+        nbody = self.mjc_body_to_newton.shape[1]
+        wp.launch(
+            convert_mj_body_cacc_to_warp_kernel,
+            dim=(nworld, nbody),
+            inputs=[
+                self.mjc_body_to_newton,
+                cacc,
+            ],
+            outputs=[state.body_qdd],
+            device=model.device,
+        )
 
     @staticmethod
     def find_body_collision_filter_pairs(

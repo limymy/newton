@@ -397,6 +397,75 @@ def convert_mj_coords_to_warp_kernel(
 
 
 @wp.kernel
+def convert_mj_acc_to_warp_kernel(
+    qpos: wp.array2d(dtype=wp.float32),
+    qacc: wp.array2d(dtype=wp.float32),
+    joints_per_world: int,
+    up_axis: int,
+    joint_type: wp.array(dtype=wp.int32),
+    joint_q_start: wp.array(dtype=wp.int32),
+    joint_qd_start: wp.array(dtype=wp.int32),
+    joint_dof_dim: wp.array(dtype=wp.int32, ndim=2),
+    # outputs
+    joint_qdd: wp.array(dtype=wp.float32),
+):
+    worldid, jntid = wp.tid()
+
+    type = joint_type[jntid]
+    q_i = joint_q_start[jntid]
+    qd_i = joint_qd_start[jntid]
+    wqd_i = joint_qd_start[joints_per_world * worldid + jntid]
+
+    if type == JointType.FREE:
+        joint_qdd[wqd_i + 0] = qacc[worldid, qd_i + 0]
+        joint_qdd[wqd_i + 1] = qacc[worldid, qd_i + 1]
+        joint_qdd[wqd_i + 2] = qacc[worldid, qd_i + 2]
+
+        # change quaternion order from wxyz to xyzw
+        rot = wp.quat(
+            qpos[worldid, q_i + 4],
+            qpos[worldid, q_i + 5],
+            qpos[worldid, q_i + 6],
+            qpos[worldid, q_i + 3],
+        )
+
+        alpha = wp.vec3(qacc[worldid, qd_i + 3], qacc[worldid, qd_i + 4], qacc[worldid, qd_i + 5])
+        alpha = wp.quat_rotate(rot, alpha)
+        joint_qdd[wqd_i + 3] = alpha[0]
+        joint_qdd[wqd_i + 4] = alpha[1]
+        joint_qdd[wqd_i + 5] = alpha[2]
+    elif type == JointType.BALL:
+        for i in range(3):
+            joint_qdd[wqd_i + i] = qacc[worldid, qd_i + i]
+    else:
+        axis_count = joint_dof_dim[jntid, 0] + joint_dof_dim[jntid, 1]
+        for i in range(axis_count):
+            joint_qdd[wqd_i + i] = qacc[worldid, qd_i + i]
+
+
+@wp.kernel
+def convert_mj_body_cacc_to_warp_kernel(
+    mjc_body_to_newton: wp.array2d(dtype=wp.int32),
+    cacc: wp.array2d(dtype=wp.spatial_vector),
+    # outputs
+    body_qdd: wp.array(dtype=wp.spatial_vector),
+):
+    """Convert MuJoCo body accelerations (cacc) to Newton body_qdd.
+
+    MuJoCo stores spatial accelerations in (rot, lin) order, while Newton's
+    body_qd/body_qdd convention is (lin, ang). This kernel maps MuJoCo bodies
+    to Newton bodies and swaps the first/last 3 components.
+    """
+    world, mjc_body = wp.tid()
+    newton_body = mjc_body_to_newton[world, mjc_body]
+    if newton_body >= 0:
+        a = cacc[world, mjc_body]
+        ang = wp.vec3(a[0], a[1], a[2])
+        lin = wp.vec3(a[3], a[4], a[5])
+        body_qdd[newton_body] = wp.spatial_vector(lin, ang)
+
+
+@wp.kernel
 def convert_warp_coords_to_mj_kernel(
     joint_q: wp.array(dtype=wp.float32),
     joint_qd: wp.array(dtype=wp.float32),

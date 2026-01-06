@@ -46,6 +46,14 @@ class State:
         """Rigid body velocities (spatial), shape (body_count,), dtype :class:`spatial_vector`.
         First three entries: linear velocity; last three: angular velocity."""
 
+        self.body_qdd: wp.array | None = None
+        """Rigid body accelerations (spatial), shape (body_count,), dtype :class:`spatial_vector`.
+        First three entries: linear acceleration; last three: angular acceleration.
+
+        Note:
+            Semantics follow :attr:`body_qd`: acceleration of the body's center of mass in world frame.
+        """
+
         self.body_f: wp.array | None = None
         """Rigid body forces (spatial), shape (body_count,), dtype :class:`spatial_vector`.
         First three entries: linear force; last three: torque.
@@ -60,6 +68,9 @@ class State:
 
         self.joint_qd: wp.array | None = None
         """Generalized joint velocity coordinates, shape (joint_dof_count,), dtype float."""
+
+        self.joint_qdd: wp.array | None = None
+        """Generalized joint acceleration coordinates, shape (joint_dof_count,), dtype float."""
 
     def clear_forces(self) -> None:
         """

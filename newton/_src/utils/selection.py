@@ -702,6 +702,28 @@ class ArticulationView:
         else:
             return wp.array(attrib, dtype=wp.spatial_vector, device=self.device, copy=False)
 
+    def get_root_accelerations(self, source: State):
+        """
+        Get the root accelerations of the articulations.
+
+        Args:
+            source (State): Where to get the root accelerations (State).
+
+        Returns:
+            array: The root accelerations (dtype=wp.spatial_vector).
+        """
+        if self.is_floating_base:
+            attrib_slice = Slice(self._arti_joint_dof_begin, self._arti_joint_dof_begin + 6)
+            attrib = self._get_attribute_values("joint_qdd", source, _slice=attrib_slice)
+        else:
+            # FIXME? Non-floating articulations have no root accelerations.
+            return None
+
+        if attrib.dtype is wp.spatial_vector:
+            return attrib
+        else:
+            return wp.array(attrib, dtype=wp.spatial_vector, device=self.device, copy=False)
+
     def set_root_velocities(self, target: Model | State, values: wp.array, mask=None):
         """
         Set the root velocities of the articulations.
@@ -741,6 +763,18 @@ class ArticulationView:
         """
         return self._get_attribute_values("body_qd", source)
 
+    def get_link_accelerations(self, source: State):
+        """
+        Get the world-space spatial accelerations of all links in the selected articulations.
+
+        Args:
+            source (State): The source from which to retrieve the link accelerations.
+
+        Returns:
+            array: The link accelerations (dtype=wp.spatial_vector).
+        """
+        return self._get_attribute_values("body_qdd", source)
+
     def get_dof_positions(self, source: "Model | State"):
         """
         Get the joint coordinate positions (DoF positions) for the selected articulations.
@@ -775,6 +809,18 @@ class ArticulationView:
             array: The joint coordinate velocities (dtype=float).
         """
         return self._get_attribute_values("joint_qd", source)
+
+    def get_dof_accelerations(self, source: State):
+        """
+        Get the joint coordinate accelerations (DoF accelerations) for the selected articulations.
+
+        Args:
+            source (State): The source from which to retrieve the DoF accelerations.
+
+        Returns:
+            array: The joint coordinate accelerations (dtype=float).
+        """
+        return self._get_attribute_values("joint_qdd", source)
 
     def set_dof_velocities(self, target: "Model | State", values, mask=None):
         """
