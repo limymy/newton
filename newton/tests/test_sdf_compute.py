@@ -31,8 +31,8 @@ import numpy as np
 import warp as wp
 
 import newton
+from newton import GeoType, Mesh
 from newton._src.geometry.sdf_contact import sample_sdf_extrapolated, sample_sdf_grad_extrapolated
-from newton._src.geometry.types import Mesh
 from newton.geometry import SDFData, compute_sdf
 from newton.tests.unittest_utils import add_function_test, get_cuda_test_devices
 
@@ -105,6 +105,92 @@ def create_box_mesh(half_extents: tuple[float, float, float]) -> Mesh:
         dtype=np.int32,
     )
     return Mesh(vertices, indices)
+
+
+def create_sphere_mesh(radius: float, subdivisions: int = 2) -> Mesh:
+    """Create a sphere mesh by subdividing an icosahedron."""
+    # Golden ratio
+    phi = (1.0 + np.sqrt(5.0)) / 2.0
+
+    # Icosahedron vertices (normalized and scaled by radius)
+    verts_list = [
+        [-1, phi, 0],
+        [1, phi, 0],
+        [-1, -phi, 0],
+        [1, -phi, 0],
+        [0, -1, phi],
+        [0, 1, phi],
+        [0, -1, -phi],
+        [0, 1, -phi],
+        [phi, 0, -1],
+        [phi, 0, 1],
+        [-phi, 0, -1],
+        [-phi, 0, 1],
+    ]
+    norm_factor = np.linalg.norm(verts_list[0])
+    verts_list = [
+        [v[0] / norm_factor * radius, v[1] / norm_factor * radius, v[2] / norm_factor * radius] for v in verts_list
+    ]
+
+    # Icosahedron faces (CCW winding for outward normals)
+    faces = [
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ]
+
+    # Subdivide
+    for _ in range(subdivisions):
+        new_faces = []
+        edge_midpoints = {}
+
+        def get_midpoint(i0, i1, _edge_midpoints=edge_midpoints):
+            key = (min(i0, i1), max(i0, i1))
+            if key not in _edge_midpoints:
+                v0, v1 = verts_list[i0], verts_list[i1]
+                mid = [(v0[0] + v1[0]) / 2, (v0[1] + v1[1]) / 2, (v0[2] + v1[2]) / 2]
+                length = np.sqrt(mid[0] ** 2 + mid[1] ** 2 + mid[2] ** 2)
+                mid = [mid[0] / length * radius, mid[1] / length * radius, mid[2] / length * radius]
+                _edge_midpoints[key] = len(verts_list)
+                verts_list.append(mid)
+            return _edge_midpoints[key]
+
+        for f in faces:
+            a = get_midpoint(f[0], f[1])
+            b = get_midpoint(f[1], f[2])
+            c = get_midpoint(f[2], f[0])
+            new_faces.extend([[f[0], a, c], [f[1], b, a], [f[2], c, b], [a, b, c]])
+        faces = new_faces
+
+    verts = np.array(verts_list, dtype=np.float32)
+    indices = np.array(faces, dtype=np.int32).flatten()
+    return Mesh(verts, indices)
+
+
+def invert_mesh_winding(mesh: Mesh) -> Mesh:
+    """Create a mesh with inverted winding by swapping triangle indices."""
+    indices = mesh.indices.copy()
+    # Swap second and third vertex of each triangle to flip winding
+    for i in range(0, len(indices), 3):
+        indices[i + 1], indices[i + 2] = indices[i + 2], indices[i + 1]
+    return Mesh(mesh.vertices.copy(), indices)
 
 
 # Warp kernel for sampling SDF values
@@ -185,8 +271,9 @@ class TestComputeSDF(unittest.TestCase):
 
     def test_sdf_returns_valid_data(self):
         """Test that compute_sdf returns valid data."""
-        sdf_data, sparse_volume, coarse_volume = compute_sdf(
+        sdf_data, sparse_volume, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -197,8 +284,9 @@ class TestComputeSDF(unittest.TestCase):
 
     def test_sdf_extents_are_valid(self):
         """Test that SDF extents match the mesh bounds."""
-        sdf_data, _, _ = compute_sdf(
+        sdf_data, _, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
             margin=0.05,
         )
@@ -216,8 +304,9 @@ class TestComputeSDF(unittest.TestCase):
         (within narrow_band_distance) will have valid values. Points far from the
         surface will return the background value.
         """
-        sdf_data, sparse_volume, _ = compute_sdf(
+        sdf_data, sparse_volume, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
             narrow_band_distance=(-0.1, 0.1),
         )
@@ -246,8 +335,9 @@ class TestComputeSDF(unittest.TestCase):
 
     def test_coarse_sdf_values_inside_extent(self):
         """Test that coarse SDF values inside the extent are smaller than background."""
-        sdf_data, _, coarse_volume = compute_sdf(
+        sdf_data, _, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -282,8 +372,9 @@ class TestComputeSDF(unittest.TestCase):
         Points at or near this boundary should still have valid SDF values.
         """
         margin = 0.05
-        sdf_data, _, coarse_volume = compute_sdf(
+        sdf_data, _, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
             margin=margin,
         )
@@ -351,8 +442,9 @@ class TestComputeSDF(unittest.TestCase):
         within this narrow band, so we should get valid values there.
         """
         margin = 0.05
-        sdf_data, sparse_volume, _ = compute_sdf(
+        sdf_data, sparse_volume, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
             margin=margin,
         )
@@ -409,8 +501,9 @@ class TestComputeSDF(unittest.TestCase):
         For the sparse SDF, we test a point just inside the surface (within the narrow band).
         For the coarse SDF, we can test the center since it covers the entire volume.
         """
-        _sdf_data, sparse_volume, coarse_volume = compute_sdf(
+        _sdf_data, sparse_volume, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -428,8 +521,9 @@ class TestComputeSDF(unittest.TestCase):
 
     def test_sdf_positive_outside_mesh(self):
         """Test that SDF values are positive outside the mesh."""
-        _sdf_data, sparse_volume, coarse_volume = compute_sdf(
+        _sdf_data, sparse_volume, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -446,8 +540,9 @@ class TestComputeSDF(unittest.TestCase):
 
     def test_sdf_gradient_points_outward(self):
         """Test that SDF gradient points away from the surface (outward)."""
-        _sdf_data, sparse_volume, _ = compute_sdf(
+        _sdf_data, sparse_volume, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -474,8 +569,9 @@ class TestComputeSDF(unittest.TestCase):
         We test at a point near the surface (within the narrow band) where both
         SDFs should have valid values.
         """
-        _sdf_data, sparse_volume, coarse_volume = compute_sdf(
+        _sdf_data, sparse_volume, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -499,13 +595,15 @@ class TestComputeSDF(unittest.TestCase):
         """
         thickness = 0.1
 
-        _, sparse_no_thickness, _ = compute_sdf(
+        _, sparse_no_thickness, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
-        _, sparse_with_thickness, _ = compute_sdf(
+        _, sparse_with_thickness, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=thickness,
         )
 
@@ -522,6 +620,79 @@ class TestComputeSDF(unittest.TestCase):
             places=2,
             msg=f"Thickness should offset SDF by -{thickness}",
         )
+
+    def test_inverted_winding_sphere(self):
+        """Test SDF computation for a sphere mesh with inverted winding.
+
+        Verifies that:
+        1. The inverted winding is detected (winding threshold becomes -0.5)
+        2. Points inside the sphere still have negative SDF values
+        3. Points outside the sphere still have positive SDF values
+        """
+        radius = 0.5
+        sphere = create_sphere_mesh(radius, subdivisions=2)
+        inverted_sphere = invert_mesh_winding(sphere)
+
+        # Compute SDF at low resolution for speed, with wider narrow band
+        _, sparse_volume, coarse_volume, _ = compute_sdf(
+            mesh_src=inverted_sphere,
+            shape_type=GeoType.MESH,
+            shape_thickness=0.0,
+            max_resolution=32,
+            narrow_band_distance=(-0.2, 0.2),  # Wider band for testing
+        )
+
+        self.assertIsNotNone(sparse_volume)
+        self.assertIsNotNone(coarse_volume)
+
+        # Test points inside the sphere (should be negative)
+        inside_points = np.array(
+            [
+                [0.0, 0.0, 0.0],  # Center
+                [0.1, 0.0, 0.0],  # Slightly off center
+                [0.0, 0.2, 0.0],  # Another inside point
+                [0.1, 0.1, 0.1],  # Inside diagonal
+            ],
+            dtype=np.float32,
+        )
+
+        inside_values = sample_sdf_at_points(coarse_volume, inside_points)
+        for i, (point, value) in enumerate(zip(inside_points, inside_values, strict=False)):
+            self.assertLess(value, 0.0, f"Point {i} at {point} should be inside (negative), got {value}")
+
+        # Test points near but inside sphere surface (should be negative)
+        # The SDF extent is ~1.1, so stay well within bounds
+        near_inside_points = np.array(
+            [
+                [radius - 0.05, 0.0, 0.0],  # Just inside +X
+                [0.0, radius - 0.05, 0.0],  # Just inside +Y
+                [0.0, 0.0, radius - 0.05],  # Just inside +Z
+            ],
+            dtype=np.float32,
+        )
+
+        near_inside_values = sample_sdf_at_points(coarse_volume, near_inside_points)
+        for i, (point, value) in enumerate(zip(near_inside_points, near_inside_values, strict=False)):
+            self.assertLess(value, 0.0, f"Point {i} at {point} should be inside (negative), got {value}")
+
+        # Test points just outside sphere surface (should be positive)
+        # Use small offset (0.02) to stay well within the narrow band and volume extent
+        outside_offset = 0.02
+        outside_points = np.array(
+            [
+                [radius + outside_offset, 0.0, 0.0],  # Just outside +X
+                [0.0, radius + outside_offset, 0.0],  # Just outside +Y
+                [0.0, 0.0, radius + outside_offset],  # Just outside +Z
+                [-(radius + outside_offset), 0.0, 0.0],  # Just outside -X
+                [0.0, -(radius + outside_offset), 0.0],  # Just outside -Y
+                [0.0, 0.0, -(radius + outside_offset)],  # Just outside -Z
+            ],
+            dtype=np.float32,
+        )
+
+        outside_values = sample_sdf_at_points(coarse_volume, outside_points)
+        for i, (point, value) in enumerate(zip(outside_points, outside_values, strict=False)):
+            self.assertGreater(value, 0.0, f"Point {i} at {point} should be outside (positive), got {value}")
 
 
 @unittest.skipUnless(_cuda_available, "wp.Volume requires CUDA device")
@@ -544,8 +715,9 @@ class TestComputeSDFGridSampling(unittest.TestCase):
         Since the sparse SDF is a narrow-band SDF, we sample points near the surface
         (on a shell around the box) where the SDF should have valid values.
         """
-        sdf_data, sparse_volume, _ = compute_sdf(
+        sdf_data, sparse_volume, _, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -572,8 +744,9 @@ class TestComputeSDFGridSampling(unittest.TestCase):
 
     def test_grid_sampling_coarse_sdf(self):
         """Sample coarse SDF on a grid and verify all values are less than background."""
-        sdf_data, _, coarse_volume = compute_sdf(
+        sdf_data, _, coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
         )
 
@@ -676,8 +849,9 @@ class TestSDFExtrapolation(unittest.TestCase):
         self.half_extents = (0.5, 0.5, 0.5)
         self.mesh = create_box_mesh(self.half_extents)
         # Create SDF with known parameters
-        self.sdf_data, self.sparse_volume, self.coarse_volume = compute_sdf(
+        self.sdf_data, self.sparse_volume, self.coarse_volume, _ = compute_sdf(
             mesh_src=self.mesh,
+            shape_type=GeoType.MESH,
             shape_thickness=0.0,
             narrow_band_distance=(-0.1, 0.1),
             margin=0.05,
@@ -753,9 +927,9 @@ class TestSDFExtrapolation(unittest.TestCase):
         # Get boundary points (clamped to extent)
         boundary_points = np.array(
             [
-                center + np.array([half_ext[0], 0.0, 0.0]),  # +X boundary
-                center + np.array([0.0, half_ext[1], 0.0]),  # +Y boundary
-                center + np.array([0.0, 0.0, half_ext[2]]),  # +Z boundary
+                center + np.array([half_ext[0] - 1e-6, 0.0, 0.0]),  # +X boundary
+                center + np.array([0.0, half_ext[1] - 1e-6, 0.0]),  # +Y boundary
+                center + np.array([0.0, 0.0, half_ext[2] - 1e-6]),  # +Z boundary
             ],
             dtype=np.float32,
         )
@@ -1036,11 +1210,9 @@ def test_brick_pyramid_stability(test, device):
     initial_top_pos = initial_state.body_q.numpy()[top_brick_body][:3].copy()
 
     # Create collision pipeline and solver
-    collision_pipeline = newton.CollisionPipelineUnified.from_model(
+    collision_pipeline = newton.CollisionPipeline.from_model(
         model,
-        rigid_contact_max_per_pair=10,
         broad_phase_mode=newton.BroadPhaseMode.NXN,
-        reduce_contacts=True,
     )
     solver = newton.solvers.SolverXPBD(model, iterations=10, rigid_contact_relaxation=0.8)
 

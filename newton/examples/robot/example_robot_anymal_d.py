@@ -28,6 +28,7 @@ import warp as wp
 import newton
 import newton.examples
 import newton.utils
+from newton import ActuatorMode
 
 
 class Example:
@@ -70,6 +71,7 @@ class Example:
         for i in range(articulation_builder.joint_dof_count):
             articulation_builder.joint_target_ke[i] = 150
             articulation_builder.joint_target_kd[i] = 5
+            articulation_builder.joint_act_mode[i] = int(ActuatorMode.POSITION)
 
         builder = newton.ModelBuilder(up_axis=newton.Axis.Z)
         for _ in range(self.num_worlds):
@@ -86,7 +88,7 @@ class Example:
             impratio=100,
             iterations=100,
             ls_iterations=50,
-            nconmax=20,
+            nconmax=45,
             njmax=100,
             use_mujoco_contacts=args.use_mujoco_contacts if args else False,
         )
@@ -98,7 +100,7 @@ class Example:
         # Evaluate forward kinematics for collision detection
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
 
-        # Create collision pipeline from command-line args (default: CollisionPipelineUnified with EXPLICIT)
+        # Create collision pipeline from command-line args (default: CollisionPipeline with EXPLICIT)
         self.collision_pipeline = newton.examples.create_collision_pipeline(self.model, args)
         self.contacts = self.model.collide(self.state_0, collision_pipeline=self.collision_pipeline)
 
@@ -156,7 +158,7 @@ class Example:
                 self.state_0,
                 "body velocities are small",
                 lambda q, qd: max(abs(qd))
-                < 0.25,  # Relaxed from 0.1 - unified pipeline has residual velocities up to ~0.2
+                < 0.25,  # Relaxed from 0.1 - collision pipeline has residual velocities up to ~0.2
             )
 
 

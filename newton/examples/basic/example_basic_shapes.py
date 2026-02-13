@@ -16,10 +16,13 @@
 ###########################################################################
 # Example Basic Shapes
 #
-# Shows how to programmatically creates a variety of
+# Shows how to programmatically create a variety of
 # collision shapes using the newton.ModelBuilder() API.
+# Supports XPBD (default) and VBD solvers.
 #
 # Command: python -m newton.examples basic_shapes
+# With VBD: python -m newton.examples basic_shapes --solver vbd
+#
 #
 ###########################################################################
 
@@ -41,8 +44,15 @@ class Example:
         self.sim_dt = self.frame_dt / self.sim_substeps
 
         self.viewer = viewer
+        self.solver_type = args.solver if hasattr(args, "solver") and args.solver else "xpbd"
 
         builder = newton.ModelBuilder()
+
+        if self.solver_type == "vbd":
+            # VBD: Higher stiffness for stable rigid body contacts
+            builder.default_shape_cfg.ke = 1.0e6  # Contact stiffness
+            builder.default_shape_cfg.kd = 1.0e1  # Contact damping
+            builder.default_shape_cfg.mu = 0.5  # Friction coefficient
 
         # add ground plane
         builder.add_ground_plane()
@@ -90,24 +100,30 @@ class Example:
         body_cone = builder.add_body(xform=wp.transform(p=self.cone_pos, q=wp.quat_identity()), key="cone")
         builder.add_shape_cone(body_cone, radius=0.45, half_height=0.6)
 
+        # Color rigid bodies for VBD solver
+        if self.solver_type == "vbd":
+            builder.color()
+
         # finalize model
         self.model = builder.finalize()
 
-        self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
+        # Create solver based on type
+        if self.solver_type == "vbd":
+            self.solver = newton.solvers.SolverVBD(
+                self.model,
+                iterations=10,
+            )
+        else:
+            self.solver = newton.solvers.SolverXPBD(self.model, iterations=10)
 
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.control = self.model.control()
 
-        # not required for MuJoCo, but required for maximal-coordinate solvers like XPBD
-        newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
-
-        # Create collision pipeline from command-line args (default: CollisionPipelineUnified with EXPLICIT)
-        # Override rigid_contact_max_per_pair because mesh vs plane creates a lot of contacts
+        # Create collision pipeline from command-line args (default: CollisionPipeline with EXPLICIT)
         self.collision_pipeline = newton.examples.create_collision_pipeline(
             self.model,
             args,
-            rigid_contact_max_per_pair=100,
         )
         self.contacts = self.model.collide(self.state_0, collision_pipeline=self.collision_pipeline)
 
@@ -151,7 +167,7 @@ class Example:
             self.model,
             self.state_0,
             "sphere at rest pose",
-            lambda q, qd: newton.utils.vec_allclose(q, sphere_q, atol=2e-4),
+            lambda q, qd: newton.math.vec_allclose(q, sphere_q, atol=2e-4),
             [0],
         )
         # Ellipsoid with a=b=0.5, c=0.25 is stable (flat disk), rests at z=0.25
@@ -161,7 +177,7 @@ class Example:
             self.model,
             self.state_0,
             "ellipsoid at rest pose",
-            lambda q, qd: newton.utils.vec_allclose(q, ellipsoid_q, atol=2e-2),
+            lambda q, qd: newton.math.vec_allclose(q, ellipsoid_q, atol=2e-2),
             [1],
         )
         self.capsule_pos[2] = 1.0
@@ -170,7 +186,7 @@ class Example:
             self.model,
             self.state_0,
             "capsule at rest pose",
-            lambda q, qd: newton.utils.vec_allclose(q, capsule_q, atol=2e-4),
+            lambda q, qd: newton.math.vec_allclose(q, capsule_q, atol=2e-4),
             [2],
         )
         # Custom test for cylinder: allow 0.01 error for X and Y, strict for Z and rotation
@@ -195,7 +211,7 @@ class Example:
             self.model,
             self.state_0,
             "box at rest pose",
-            lambda q, qd: newton.utils.vec_allclose(q, box_q, atol=0.1),
+            lambda q, qd: newton.math.vec_allclose(q, box_q, atol=0.1),
             [4],
         )
         # we only test that the bunny didn't fall through the ground and didn't slide too far
@@ -216,10 +232,18 @@ class Example:
 
 
 if __name__ == "__main__":
-    # Parse arguments and initialize viewer
-    viewer, args = newton.examples.init()
+    # Extend the shared examples parser with a solver choice
+    parser = newton.examples.create_parser()
+    parser.add_argument(
+        "--solver",
+        type=str,
+        default="xpbd",
+        choices=["vbd", "xpbd"],
+        help="Solver type: xpbd (default) or vbd",
+    )
 
-    # Create viewer and run
+    viewer, args = newton.examples.init(parser)
+
     example = Example(viewer, args)
 
     newton.examples.run(example, args)

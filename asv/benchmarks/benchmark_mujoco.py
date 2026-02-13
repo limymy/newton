@@ -40,7 +40,7 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 80,
         "nconmax": 25,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "pyramidal",
     },
     "g1": {
@@ -48,7 +48,7 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 210,
         "nconmax": 35,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "pyramidal",
     },
     "h1": {
@@ -56,14 +56,14 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 65,
         "nconmax": 15,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "pyramidal",
     },
-    "cartpole": {  # TODO: use the Lab version of cartpole and revert param value
+    "cartpole": {
         "solver": "newton",
         "integrator": "implicitfast",
-        "njmax": 24,  # 5
-        "nconmax": 6,  # 5
+        "njmax": 5,
+        "nconmax": 0,
         "ls_parallel": False,
         "cone": "pyramidal",
     },
@@ -72,7 +72,7 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 38,
         "nconmax": 15,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "pyramidal",
     },
     "quadruped": {
@@ -80,7 +80,7 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 75,
         "nconmax": 50,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "pyramidal",
     },
     "allegro": {
@@ -88,7 +88,7 @@ ROBOT_CONFIGS = {
         "integrator": "implicitfast",
         "njmax": 60,
         "nconmax": 40,
-        "ls_parallel": True,
+        "ls_parallel": False,
         "cone": "elliptic",
     },
     "kitchen": {
@@ -110,6 +110,7 @@ def _setup_humanoid(articulation_builder):
         ignore_names=["floor", "ground"],
         up_axis="Z",
         parse_sites=False,  # AD: remove once asset is fixed
+        enable_self_collisions=False,  # Keep False for consistent benchmark performance
     )
 
     # Setting root pose
@@ -186,16 +187,17 @@ def _setup_cartpole(articulation_builder):
     articulation_builder.default_body_armature = 0.1
 
     articulation_builder.add_usd(
-        newton.examples.get_asset("cartpole.usda"),
+        newton.examples.get_asset("cartpole_single_pendulum.usda"),
         enable_self_collisions=False,
         collapse_fixed_joints=True,
     )
-    # set initial joint positions
-    articulation_builder.joint_q[-3:] = [0.0, 0.3, 0.0]
+    # set initial joint positions (cartpole has 2 joints: prismatic slider + revolute pole)
+    # joint_q[0] = slider position, joint_q[1] = pole angle
+    articulation_builder.joint_q[0] = 0.0  # slider at origin
+    articulation_builder.joint_q[1] = 0.3  # pole tilted
 
     # Setting root pose
     root_dofs = 1
-    articulation_builder.joint_q[:3] = [0.0, 0.3, 0.0]
 
     return root_dofs
 
@@ -257,6 +259,7 @@ def _setup_kitchen(articulation_builder):
     articulation_builder.add_mjcf(
         asset_file,
         collapse_fixed_joints=True,
+        enable_self_collisions=False,  # Keep False for consistent benchmark performance
     )
 
     # Change pose of the robot to minimize overlap
@@ -267,7 +270,6 @@ def _setup_tabletop(articulation_builder):
     articulation_builder.add_mjcf(
         newton.examples.get_asset("tabletop.xml"),
         collapse_fixed_joints=True,
-        enable_self_collisions=True,
     )
 
 
@@ -426,7 +428,9 @@ class Example:
                 ).tolist()
         builder.default_shape_cfg.ke = 1.0e3
         builder.default_shape_cfg.kd = 1.0e2
-        builder.add_ground_plane()
+        if robot != "cartpole":
+            # Disable all collisions for the cartpole benchmark
+            builder.add_ground_plane()
         return builder
 
     @staticmethod

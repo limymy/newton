@@ -28,6 +28,7 @@ import warp as wp
 import newton
 import newton.examples
 import newton.utils
+from newton import ActuatorMode
 
 
 class Example:
@@ -68,6 +69,7 @@ class Example:
         for i in range(len(h1.joint_target_ke)):
             h1.joint_target_ke[i] = 150
             h1.joint_target_kd[i] = 5
+            h1.joint_act_mode[i] = int(ActuatorMode.POSITION)
 
         builder = newton.ModelBuilder()
         builder.replicate(h1, self.num_worlds)
@@ -93,7 +95,7 @@ class Example:
         # Evaluate forward kinematics for collision detection
         newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
 
-        # Create collision pipeline from command-line args (default: CollisionPipelineUnified with EXPLICIT)
+        # Create collision pipeline from command-line args (default: CollisionPipeline with EXPLICIT)
         self.collision_pipeline = newton.examples.create_collision_pipeline(self.model, args)
         self.contacts = self.model.collide(self.state_0, collision_pipeline=self.collision_pipeline)
 

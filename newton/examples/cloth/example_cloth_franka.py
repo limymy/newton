@@ -130,7 +130,7 @@ def compute_body_jacobian(
 
 
 class Example:
-    def __init__(self, viewer):
+    def __init__(self, viewer, args=None):
         # parameters
         #   simulation
         self.add_cloth = True
@@ -147,14 +147,14 @@ class Example:
         self.cloth_particle_radius = 0.008
         self.cloth_body_contact_margin = 0.01
         #       self-contact
-        self.self_contact_radius = 0.002
-        self.self_contact_margin = 0.003
+        self.particle_self_contact_radius = 0.002
+        self.particle_self_contact_margin = 0.003
 
         self.soft_contact_ke = 100
         self.soft_contact_kd = 2e-3
 
         self.robot_friction = 1.0
-        self.table_friction = 0.5
+        self.table_friction = 1.0
         self.self_contact_friction = 0.25
 
         #   elasticity
@@ -226,12 +226,33 @@ class Example:
         self.model.soft_contact_kd = self.soft_contact_kd
         self.model.soft_contact_mu = self.self_contact_friction
 
+        shape_ke = self.model.shape_material_ke.numpy()
+        shape_kd = self.model.shape_material_kd.numpy()
+        shape_mu = self.model.shape_material_mu.numpy()
+
+        shape_ke[...] = self.soft_contact_ke
+        shape_kd[...] = self.soft_contact_kd
+        shape_mu[...] = 1.0
+
+        self.model.shape_material_ke = wp.array(
+            shape_ke, dtype=self.model.shape_material_ke.dtype, device=self.model.shape_material_ke.device
+        )
+        self.model.shape_material_kd = wp.array(
+            shape_kd, dtype=self.model.shape_material_kd.dtype, device=self.model.shape_material_kd.device
+        )
+        self.model.shape_material_mu = wp.array(
+            shape_mu, dtype=self.model.shape_material_mu.dtype, device=self.model.shape_material_mu.device
+        )
+
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
         self.target_joint_qd = wp.empty_like(self.state_0.joint_qd)
 
         self.control = self.model.control()
-        self.contacts = self.model.collide(self.state_0)
+
+        # Create collision pipeline (default)
+        self.collision_pipeline = newton.examples.create_collision_pipeline(self.model, args)
+        self.contacts = self.model.collide(self.state_0, collision_pipeline=self.collision_pipeline)
 
         self.sim_time = 0.0
 
@@ -248,16 +269,18 @@ class Example:
             self.cloth_solver = SolverVBD(
                 self.model,
                 iterations=self.iterations,
-                self_contact_radius=self.self_contact_radius,
-                self_contact_margin=self.self_contact_margin,
-                handle_self_contact=True,
-                vertex_collision_buffer_pre_alloc=32,
-                edge_collision_buffer_pre_alloc=64,
                 integrate_with_external_rigid_solver=True,
-                collision_detection_interval=-1,
+                particle_self_contact_radius=self.particle_self_contact_radius,
+                particle_self_contact_margin=self.particle_self_contact_margin,
+                particle_enable_self_contact=True,
+                particle_vertex_contact_buffer_size=32,
+                particle_edge_contact_buffer_size=64,
+                particle_collision_detection_interval=-1,
+                rigid_contact_k_start=self.soft_contact_ke,
             )
 
         self.viewer.set_model(self.model)
+        self.viewer.set_camera(wp.vec3(-0.6, 0.6, 1.24), -42.0, -58.0)
 
         # create Warp arrays for gravity so we can swap Model.gravity during
         # a simulation running under CUDA graph capture
@@ -524,7 +547,9 @@ class Example:
                 self.model.gravity.assign(self.gravity_earth)
 
             # cloth sim
-            self.contacts = self.model.collide(self.state_0, soft_contact_margin=self.cloth_body_contact_margin)
+            if self.collision_pipeline is not None:
+                self.collision_pipeline.soft_contact_margin = self.cloth_body_contact_margin
+            self.contacts = self.model.collide(self.state_0, collision_pipeline=self.collision_pipeline)
 
             if self.add_cloth:
                 self.cloth_solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
@@ -542,12 +567,12 @@ class Example:
         self.viewer.end_frame()
 
     def test_final(self):
-        p_lower = wp.vec3(-0.34, -0.9, 0.0)
-        p_upper = wp.vec3(0.34, 0.0, 0.51)
+        p_lower = wp.vec3(-0.36, -0.95, -0.05)
+        p_upper = wp.vec3(0.36, 0.05, 0.56)
         newton.examples.test_particle_state(
             self.state_0,
             "particles are within a reasonable volume",
-            lambda q, qd: newton.utils.vec_inside_limits(q, p_lower, p_upper),
+            lambda q, qd: newton.math.vec_inside_limits(q, p_lower, p_upper),
         )
         newton.examples.test_particle_state(
             self.state_0,
@@ -569,6 +594,6 @@ if __name__ == "__main__":
     viewer, args = newton.examples.init(parser)
 
     # Create example and run
-    example = Example(viewer)
+    example = Example(viewer, args)
 
     newton.examples.run(example, args)
