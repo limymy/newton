@@ -24,7 +24,11 @@ import numpy as np
 import warp as wp
 
 from newton import JointType
-from newton._src.solvers.mujoco.kernels import convert_mj_acc_to_warp_kernel, convert_mj_body_cacc_to_warp_kernel
+from newton._src.solvers.mujoco.kernels import (
+    convert_mj_acc_to_warp_kernel,
+    convert_mj_body_cacc_to_warp_kernel,
+    convert_rigid_forces_from_mj_kernel,
+)
 
 
 class TestMuJoCoAccelerationKernels(unittest.TestCase):
@@ -98,6 +102,39 @@ class TestMuJoCoAccelerationKernels(unittest.TestCase):
         )
 
         np.testing.assert_allclose(joint_qdd.numpy(), np.array([3.25], dtype=np.float32))
+
+    def test_mjwarp_cacc_pass_through_to_body_qdd(self):
+        mjc_body_to_newton = wp.array([[-1, 0]], dtype=wp.int32, device=self.device)
+
+        body_rootid = wp.array([0, 0], dtype=wp.int32, device=self.device)
+        xipos = wp.array([[[0.0, 0.0, 0.0], [0.7, -0.3, 0.2]]], dtype=wp.vec3, device=self.device)
+        subtree_com = wp.array([[[0.0, 0.0, 0.0], [0.1, 0.2, -0.4]]], dtype=wp.vec3, device=self.device)
+
+        cacc_np = np.zeros((1, 2, 6), dtype=np.float32)
+        cacc_np[0, 1, :] = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float32)
+        mjw_cacc = wp.array(cacc_np, dtype=wp.spatial_vector, device=self.device)
+
+        mjw_cint = wp.zeros((1, 2), dtype=wp.spatial_vector, device=self.device)
+
+        body_qdd = wp.zeros(1, dtype=wp.spatial_vector, device=self.device)
+        body_parent_f = wp.zeros(1, dtype=wp.spatial_vector, device=self.device)
+
+        wp.launch(
+            convert_rigid_forces_from_mj_kernel,
+            dim=(1, 2),
+            inputs=[
+                mjc_body_to_newton,
+                body_rootid,
+                xipos,
+                subtree_com,
+                mjw_cacc,
+                mjw_cint,
+            ],
+            outputs=[body_qdd, body_parent_f],
+            device=self.device,
+        )
+
+        np.testing.assert_allclose(body_qdd.numpy()[0], np.array([4.0, 5.0, 6.0, 1.0, 2.0, 3.0], dtype=np.float32))
 
 
 if __name__ == "__main__":

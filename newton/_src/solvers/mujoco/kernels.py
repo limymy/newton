@@ -1839,38 +1839,14 @@ def update_eq_data_and_active_kernel(
     eq_active_out[world, mjc_eq] = eq_constraint_enabled[newton_eq]
 
 
-@wp.func
-def mj_body_acceleration(
-    body_rootid: wp.array(dtype=int),
-    xipos_in: wp.array2d(dtype=wp.vec3),
-    subtree_com_in: wp.array2d(dtype=wp.vec3),
-    cvel_in: wp.array2d(dtype=wp.spatial_vector),
-    cacc_in: wp.array2d(dtype=wp.spatial_vector),
-    worldid: int,
-    bodyid: int,
-) -> wp.vec3:
-    """Compute accelerations for bodies from mjwarp data."""
-    cacc = cacc_in[worldid, bodyid]
-    cvel = cvel_in[worldid, bodyid]
-    offset = xipos_in[worldid, bodyid] - subtree_com_in[worldid, body_rootid[bodyid]]
-    ang = wp.spatial_top(cvel)
-    lin = wp.spatial_bottom(cvel) - wp.cross(offset, ang)
-    acc = wp.spatial_bottom(cacc) - wp.cross(offset, wp.spatial_top(cacc))
-    correction = wp.cross(ang, lin)
-
-    return acc + correction
-
-
 @wp.kernel
 def convert_rigid_forces_from_mj_kernel(
     mjc_body_to_newton: wp.array2d(dtype=wp.int32),
     # mjw sources
     mjw_body_rootid: wp.array(dtype=wp.int32),
-    mjw_gravity: wp.array(dtype=wp.vec3),
     mjw_xipos: wp.array2d(dtype=wp.vec3),
     mjw_subtree_com: wp.array2d(dtype=wp.vec3),
     mjw_cacc: wp.array2d(dtype=wp.spatial_vector),
-    mjw_cvel: wp.array2d(dtype=wp.spatial_vector),
     mjw_cint: wp.array2d(dtype=wp.spatial_vector),
     # outputs
     body_qdd: wp.array(dtype=wp.spatial_vector),
@@ -1885,16 +1861,7 @@ def convert_rigid_forces_from_mj_kernel(
 
     if body_qdd:
         cacc = mjw_cacc[world, mjc_body]
-        qdd_lin = mj_body_acceleration(
-            mjw_body_rootid,
-            mjw_xipos,
-            mjw_subtree_com,
-            mjw_cvel,
-            mjw_cacc,
-            world,
-            mjc_body,
-        )
-        body_qdd[newton_body] = wp.spatial_vector(qdd_lin + mjw_gravity[world], wp.spatial_top(cacc))
+        body_qdd[newton_body] = wp.spatial_vector(wp.spatial_bottom(cacc), wp.spatial_top(cacc))
 
     if body_parent_f:
         cint = mjw_cint[world, mjc_body]
